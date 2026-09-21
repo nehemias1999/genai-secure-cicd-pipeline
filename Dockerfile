@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
-
+# ==============================================================================
+# Description: Imagen multi-stage para la API GenAI dummy. Stage builder instala
+#   deps runtime pinneadas; stage runtime copia solo artefactos, usuario non-root
+#   (UID 10001), labels OCI de trazabilidad (revision, source, created).
+# Author: implementer-req2 (SDD flow, requisito container)
+# Usage: docker build --build-arg GIT_SHA=... --build-arg REPO_URL=... --build-arg BUILD_TIMESTAMP=... -t <name>:<tag> .
+# Env Vars (build args): GIT_SHA, REPO_URL, BUILD_TIMESTAMP
+# Dependencies: python:3.12.6-slim-bookworm (base), requirements.txt (pinned)
+# ==============================================================================
 # =============================================================================
 # Stage 1: builder — instala las dependencias runtime pinneadas
 # -----------------------------------------------------------------------------
