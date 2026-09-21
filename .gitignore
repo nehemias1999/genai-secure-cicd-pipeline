@@ -9,5 +9,7 @@ __pycache__/
 venv/
 .env
 
-# Reports y artefactos del pipeline
+# Reports y artefactos del pipeline (los reports se ignoran; el .gitkeep se commitea)
 reports/
+!reports/
+!reports/.gitkeep
