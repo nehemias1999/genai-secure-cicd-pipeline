@@ -2,58 +2,58 @@
 
 Secure, end-to-end CI/CD pipeline for a Python GenAI application. Features multi-stage Docker builds, Trivy vulnerability scanning, and automated cloud registry publishing.
 
-> Build status, coverage y version badges vendrán del CI real cuando el pipeline esté autogenerando artefactos publicables.
+> Build status, coverage, and version badges will come from the actual CI when the pipeline is auto-generating publishable artifacts.
 
 ## Background
 
-DevSecOps showcase: una API FastAPI dummy de generación con LLM pasa por un pipeline CI/CD completo — validación de código (lint + tests), build multi-stage reproducible, escaneo de vulnerabilidades con Trivy y publicación a GCP Artifact Registry — con gates de seguridad y trazabilidad de build en cada etapa.
+DevSecOps showcase: a dummy FastAPI LLM generation API goes through a complete CI/CD pipeline — code validation (lint + tests), reproducible multi-stage build, Trivy vulnerability scanning, and publishing to GCP Artifact Registry — with security gates and build traceability at every stage.
 
-Se diferencia de pipelines de ejemplo por ser *secure by default*:
+It differs from example pipelines by being *secure by default*:
 
-- **Multi-stage Docker build** con deps pinneadas y runtime no-root; las dev deps nunca entran a la imagen final.
-- **Gate de vulnerabilidades**: el escaneo Trivy **falla** cuando hay hallazgos CRITICAL/HIGH (umbral configurable).
-- **Cero secretos estáticos**: credenciales WIF solo en el CI secret store / env del operador; la key del LLM se inyecta solo en runtime.
-- **Trazabilidad**: cada run produce metadata (commit SHA + build URL + digests de imagen).
+- **Multi-stage Docker build** with pinned deps and non-root runtime; dev deps never enter the final image.
+- **Vulnerability gate**: Trivy scan **fails** when CRITICAL/HIGH findings are present (configurable threshold).
+- **Zero static secrets**: WIF credentials only in CI secret store / operator env; LLM key injected only at runtime.
+- **Traceability**: every run produces metadata (commit SHA + build URL + image digests).
 
-Los requisitos viven en `openspec/` (OpenSpec) como fuente de verdad; los cambios se desarrollaron con SDD (spec-driven development: TDD estricto por requisito, review independiente, gate humano por requisito, entrega con PR+merge).
+Requirements live in `openspec/` (OpenSpec) as the source of truth; changes were developed with SDD (spec-driven development: strict TDD per requirement, independent review, human gate per requirement, delivery via PR+merge).
 
-### Tecnologías
+### Technologies
 
-| Capa | Stack |
+| Layer | Stack |
 |---|---|
 | App | Python 3.12, FastAPI, uvicorn |
-| Build | Docker multi-stage + labels OCI (build-args: `GIT_SHA`, `REPO_URL`, `BUILD_TIMESTAMP`) |
-| Scan | Trivy (image + filesystem, modo offline, salida JSON + HTML) |
-| Publish | GCP Artifact Registry + Workload Identity Federation, tags semver + `latest` |
-| CI/CD | Pipeline declarativo Jenkins (Jenkinsfile) |
+| Build | Docker multi-stage + OCI labels (build-args: `GIT_SHA`, `REPO_URL`, `BUILD_TIMESTAMP`) |
+| Scan | Trivy (image + filesystem, offline mode, JSON + HTML output) |
+| Publish | GCP Artifact Registry + Workload Identity Federation, semver + `latest` tags |
+| CI/CD | Declarative Jenkins pipeline (Jenkinsfile) |
 
-### Arquitectura / Flujo
+### Architecture / Flow
 
 ```
 commit → Checkout & Lint (flake8) → Unit tests (pytest)
-       → Build (docker build, no-root runtime, labels OCI)
-       → Security Scan (scripts/run-trivy.sh → exit≠0 si CRITICAL/HIGH)
-       → Publish (scripts/publish.sh — gated a main + PUBLISH_MODE=real, si no dry-run)
-       └─ artefactos: reports/trivy-* + build-metadata.json (commitSha, buildUrl, digests)
+       → Build (docker build, no-root runtime, OCI labels)
+       → Security Scan (scripts/run-trivy.sh → exit≠0 if CRITICAL/HIGH)
+       → Publish (scripts/publish.sh — gated to main + PUBLISH_MODE=real, else dry-run)
+       └─ artifacts: reports/trivy-* + build-metadata.json (commitSha, buildUrl, digests)
 ```
 
-La lógica vive en `scripts/` (bash con `code-doc-standard`) que el Jenkinsfile consume; nada de lógica inline compleja en el pipeline.
+All logic lives in `scripts/` (bash with `code-doc-standard`) consumed by the Jenkinsfile; no complex inline logic in the pipeline.
 
 ## Install
 
-### Prerrequisitos
+### Prerequisites
 
-- Docker ≥ 24 (o podman ≥ 4 como drop-in: `CTR_CMD=podman`)
+- Docker ≥ 24 (or podman ≥ 4 as drop-in: `CTR_CMD=podman`)
 - Python 3.12 + venv
-- Trivy ≥ 0.50 con DB local (modo offline) con `.trivy.tpl` o el template `_trivy_html.tmpl`
-- Jenkins ≥ 2 (solo si se va a correr el pipeline; ver `Jenkinsfile`)
+- Trivy ≥ 0.50 with local DB (offline mode) with `.trivy.tpl` or the `_trivy_html.tmpl` template
+- Jenkins ≥ 2 (only if running the pipeline; see `Jenkinsfile`)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt   # runtime + pytest + flake8 pinneados
+pip install -r requirements-dev.txt   # runtime + pytest + flake8 pinned
 ```
 
-### Imagen
+### Image
 
 ```bash
 docker build -t genai-cicd-demo:dev .
@@ -61,76 +61,76 @@ docker build -t genai-cicd-demo:dev .
 
 ## Usage
 
-### API local
+### Local API
 
 ```bash
 uvicorn src.main:app --reload
 # GET  /health   → {"status":"ok",...}
-# POST /generate {"prompt":"..."}   → contenido simulado (GEMINI_API_KEY solo en runtime)
+# POST /generate {"prompt":"..."}   → simulated content (GEMINI_API_KEY only at runtime)
 ```
 
 ### Pipeline CI/CD
 
-Los scripts son ejecutables e idempotentes, con `--help`:
+Scripts are executable and idempotent, with `--help`:
 
 ```bash
-# Scan de seguridad con gate CRITICAL/HIGH + reportes JSON/HTML
+# Security scan with CRITICAL/HIGH gate + JSON/HTML reports
 scripts/run-trivy.sh <image:tag> reports/
-# Exit codes: 0 = sin hallazgos sobre el umbral; 1 = bloqueante (pone el pipeline en FAIL)
+# Exit codes: 0 = no findings above threshold; 1 = blocking (fails the pipeline)
 
-# Publicación con dry-run por defecto (sin red). Para release real:
-#   registrar el tag semver v1.2.3 en git y setear las env de registry + PUBLISH_MODE=real
-scripts/publish.sh --dry-run   # o sin flag: semver desde git tag + verify mismo digest
+# Publish with dry-run by default (no network). For real release:
+#   create semver git tag v1.2.3 and set registry env vars + PUBLISH_MODE=real
+scripts/publish.sh --dry-run   # or without flag: semver from git tag + verify same digest
 ```
 
-### Trazabilidad
+### Traceability
 
-Cada run del pipeline archiva `build-metadata.json` con `{commitSha, buildUrl, image, imageDigest, buildTimestamp}` (generado por `scripts/build-metadata.sh`).
+Every pipeline run archives `build-metadata.json` with `{commitSha, buildUrl, image, imageDigest, buildTimestamp}` (generated by `scripts/build-metadata.sh`).
 
 ## API / Configuration
 
-### Variables de entorno
+### Environment Variables
 
-#### Runtime de la API
+#### API Runtime
 
-| Variable | Requerida | Default | Descripción |
+| Variable | Required | Default | Description |
 |---|---|---|---|
-| `GEMINI_API_KEY` | runtime | — | Key del LLM; se inyecta solo en runtime, nunca embebida ni en la imagen |
+| `GEMINI_API_KEY` | runtime | — | LLM key; injected only at runtime, never embedded or in the image |
 
-#### Scripts del pipeline
+#### Pipeline Scripts
 
-| Variable | Requerida | Default | Descripción |
+| Variable | Required | Default | Description |
 |---|---|---|---|
-| `IMAGE_NAME` | scan/publish | — | Nombre de la imagen |
-| `IMAGE_TAG` | scan/publish | — | Tag a escanear/publicar |
-| `THRESHOLD` | scan | `CRITICAL` | Severidad desde la cual el escaneo bloquea (ej.: `CRITICAL`, `HIGH`) |
-| `TRIVY_BIN` | scan | `trivy` | Ruta del binario de Trivy |
-| `TRIVY_CACHE_DIR` | scan | `~/.cache/trivy` | Cache de la DB descargada (offline) |
-| `TRIVY_DB_MODE` | scan | `db` | Modo `db` (ocon índice) — req3 |
-| `CTR_CMD` | build/scan | `docker` | `docker` o `podman` |
-| `REGION` | publish | — | Región GCP del registry |
-| `PROJECT_ID` | publish | — | Proyecto GCP |
-| `REGISTRY_REPO` | publish | — | Repo de Artifact Registry |
-| `CI_IAM_CREDENTIALS_FILE` | publish real | — | Credenciales WIF vía Jenkins `withCredentials` (env del operador), jamás literal |
-| `PUBLISH_MODE` | publish | `real` | `real` desde `main` + creds; cualquier otro valor fuerza `--dry-run` |
+| `IMAGE_NAME` | scan/publish | — | Image name |
+| `IMAGE_TAG` | scan/publish | — | Tag to scan/publish |
+| `THRESHOLD` | scan | `CRITICAL` | Severity threshold that blocks the scan (e.g., `CRITICAL`, `HIGH`) |
+| `TRIVY_BIN` | scan | `trivy` | Trivy binary path |
+| `TRIVY_CACHE_DIR` | scan | `~/.cache/trivy` | Downloaded DB cache (offline) |
+| `TRIVY_DB_MODE` | scan | `db` | Mode `db` (or index) — req3 |
+| `CTR_CMD` | build/scan | `docker` | `docker` or `podman` |
+| `REGION` | publish | — | GCP registry region |
+| `PROJECT_ID` | publish | — | GCP project |
+| `REGISTRY_REPO` | publish | — | Artifact Registry repo |
+| `CI_IAM_CREDENTIALS_FILE` | publish real | — | WIF credentials via Jenkins `withCredentials` (operator env), never literal |
+| `PUBLISH_MODE` | publish | `real` | `real` from `main` + creds; any other value forces `--dry-run` |
 
-La del pipeline declarativo define `BUILD_URL`, `GIT_COMMIT`, `BUILD_TIMESTAMP` automáticamente.
+The declarative pipeline defines `BUILD_URL`, `GIT_COMMIT`, `BUILD_TIMESTAMP` automatically.
 
-### Pipeline Jenkins
+### Jenkins Pipeline
 
-`Jenkinsfile` declarativo, stages en orden estricto con fail-fast (`set -euo pipefail`, sin `|| true`):
-**Checkout & Lint → Unit tests → Build → Security Scan → Publish**. El Publish real está gated: solo corre en `main` con `PUBLISH_MODE=real` y credenciales WIF provisionadas; en PRs sin tag semver, el dry-run reporta el fallo (ver nota en `scripts/publish.sh`).
+`Jenkinsfile` declarative, stages in strict order with fail-fast (`set -euo pipefail`, no `|| true`):
+**Checkout & Lint → Unit tests → Build → Security Scan → Publish**. Real Publish is gated: only runs on `main` with `PUBLISH_MODE=real` and provisioned WIF credentials; on PRs without semver tag, dry-run reports the failure (see note in `scripts/publish.sh`).
 
 ## Contributing
 
-### Entorno de desarrollo
+### Development Environment
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
 
-### Verificaciones
+### Verifications
 
 ```bash
 python3 -m flake8 --max-line-length=88 --extend-ignore=W292 src/ tests/
@@ -139,16 +139,16 @@ bash -n scripts/*.sh
 openspec validate
 ```
 
-Convención de commits: Conventional Commits (`feat`, `fix`, `chore`, `docs`). El flujo de desarrollo es SDD (spec-driven): los cambios nuevos se proponen en `openspec/changes/`, se implementan por requisito con TDD y se entregan con PR+merge (nunca push directo a `main`).
+Commit convention: Conventional Commits (`feat`, `fix`, `chore`, `docs`). Development flow is SDD (spec-driven): new changes are proposed in `openspec/changes/`, implemented per requirement with TDD, and delivered via PR+merge (never direct push to `main`).
 
 ## License
 
-MIT declarada en el proyecto (`openspec/`); el repo no incluye archivo `LICENSE` todavía.
+MIT declared in the project (`openspec/`); the repo does not include a `LICENSE` file yet.
 
 ## Docs
 
-- [Especificación OpenSpec](openspec/) — fuente de verdad de requisitos (specs aplicadas + histórico en `openspec/changes/archive/`).
-- `docs/agent-contract/` — contratos de asignación de cada requisito (SDD).
-- Estándares: `code-doc-standard` y `readme-standard`.
+- [OpenSpec Specification](openspec/) — source of truth for requirements (applied specs + history in `openspec/changes/archive/`).
+- `docs/agent-contract/` — assignment contracts for each requirement (SDD).
+- Standards: `code-doc-standard` and `readme-standard`.
 
-_Última actualización README: 2026-09-21 (cierre del change `secure-cicd-pipeline`, req1–req5 integrados)._
+_Last README update: 2026-09-21 (closure of `secure-cicd-pipeline` change, req1–req5 integrated)._

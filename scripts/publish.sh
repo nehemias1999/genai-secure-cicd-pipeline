@@ -1,44 +1,44 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Description: Etiqueta la imagen local con semver ($IMAGE:vX.Y.Z) y latest y la
-#   publica a GCP Artifact Registry via Workload Identity Federation (nunca
-#   credenciales estaticas). La version semver se resuelve del env GIT_TAG o del
-#   git tag exacto del commit actual (patron vX.Y.Z). El modo --dry-run valida
-#   toda la logica local (resolucion, tags locales, checksum de digest) sin
-#   tocar la red ni registros.
-# Author: implementer-req4 (SDD flow, requisito registry-publish)
+# Description: Tags the local image with semver ($IMAGE:vX.Y.Z) and latest and
+#   publishes to GCP Artifact Registry via Workload Identity Federation (never
+#   static credentials). The semver version is resolved from the GIT_TAG env or
+#   the exact git tag of the current commit (pattern vX.Y.Z). The --dry-run mode
+#   validates all logic locally (resolution, local tags, digest checksum) without
+#   touching the network or registries.
+# Author: implementer-req4 (SDD flow, requirement registry-publish)
 # Usage: IMAGE=<name> [SOURCE_TAG=<tag>] scripts/publish.sh [--dry-run]
-#   --dry-run  valida resolucion + tags locales + digest y se detiene antes del
-#              push (no toca red); util sin credenciales GCP reales
-#   -h|--help  imprime la ayuda en STDOUT y sale 0
+#   --dry-run  validates resolution + local tags + digest and stops before push
+#              (no network); useful without real GCP credentials
+#   -h|--help  prints help to STDOUT and exits 0
 # Env Vars:
-#   IMAGE           (obligatorio) nombre de la imagen SIN tag, ej. genai-secure-api
-#   SOURCE_TAG      tag local origen del build (default: latest), ej. req4-test
-#   REGION          region de Artifact Registry, ej. us-central1 (obligatoria)
-#   PROJECT_ID      proyecto GCP (obligatorio)
-#   REGISTRY_REPO   repositorio de Artifact Registry (obligatorio)
-#   GIT_TAG         tag semver vX.Y.Z (opcional; default: git describe --tags --exact-match)
-#   GOOGLE_APPLICATION_CREDENTIALS / CI_IAM_CREDENTIALS_FILE: ruta al archivo de
-#                   credenciales federadas WIF (opcional; el push real exige una)
-#   CTR_CMD         runtime de contenedor (default: docker si existe, si no podman)
-# Dependencies: podman o docker (shim), git; gcloud solo para push real
+#   IMAGE           (required) image name WITHOUT tag, e.g., genai-secure-api
+#   SOURCE_TAG      local source tag of the build (default: latest), e.g., req4-test
+#   REGION          Artifact Registry region, e.g., us-central1 (required)
+#   PROJECT_ID      GCP project (required)
+#   REGISTRY_REPO   Artifact Registry repository (required)
+#   GIT_TAG         semver tag vX.Y.Z (optional; default: git describe --tags --exact-match)
+#   GOOGLE_APPLICATION_CREDENTIALS / CI_IAM_CREDENTIALS_FILE: path to the
+#                   federated WIF credentials file (optional; real push requires one)
+#   CTR_CMD         container runtime (default: docker if exists, else podman)
+# Dependencies: podman or docker (shim), git; gcloud only for real push
 # Output:
-#   stdout: pasos info + version resuelta + digest verificado; stderr: errores
+#   stdout: info steps + resolved version + verified digest; stderr: errors
 # Exit codes:
-#   0  exito (dry-run completo o push real completo)
-#   1  fallo de validacion: sin tag semver, faltan env vars de registry, sin
-#      credenciales WIF, digest divergente, imagen local inexistente, gcloud ausente
-#   2  error de uso: IMAGE faltante o argumentos invalidos
+#   0  success (complete dry-run or complete real push)
+#   1  validation failure: no semver tag, missing registry env vars, no
+#      WIF credentials, divergent digest, local image missing, gcloud missing
+#   2  usage error: IMAGE missing or invalid arguments
 # ==============================================================================
 set -Eeuo pipefail
 
-usage() { # imprime la ayuda; $1 = fd destino (1 stdout para --help, 2 para error de uso)
+usage() { # prints help; $1 = destination fd (1 stdout for --help, 2 for usage error)
   local text="Usage: IMAGE=<name> [SOURCE_TAG=<tag>] $(basename "$0") [--dry-run]
-  --dry-run   valida resolucion + tags locales + digest y se detiene antes del push
-  -h, --help  muestra esta ayuda y sale 0
+  --dry-run   validates resolution + local tags + digest and stops before push
+  -h, --help  shows this help and exits 0
 
-Variables de entorno (provenientes del pipeline/operador, no argumentos):
-  IMAGE (obligatorio), SOURCE_TAG (default latest), REGION, PROJECT_ID,
+Environment variables (from pipeline/operator, not arguments):
+  IMAGE (required), SOURCE_TAG (default latest), REGION, PROJECT_ID,
   REGISTRY_REPO, GIT_TAG, GOOGLE_APPLICATION_CREDENTIALS | CI_IAM_CREDENTIALS_FILE"
   if [[ "${1:-1}" == "2" ]]; then
     printf '%s\n' "$text" >&2
@@ -47,7 +47,7 @@ Variables de entorno (provenientes del pipeline/operador, no argumentos):
   fi
 }
 
-die() { # $1 = mensaje de error -> STDERR + exit 1 (fallo de validacion/seguridad)
+die() { # $1 = error message -> STDERR + exit 1 (validation/security failure)
   printf 'error: %s\n' "$1" >&2
   exit 1
 }
@@ -67,25 +67,25 @@ if [[ -z "${IMAGE:-}" ]]; then
   exit 2
 fi
 
-# El tag semver se resuelve aqui (GIT_TAG o git describe --tags --exact-match)
-resolve_version() { # imprime la version canonica vX.Y.Z; falla con mensaje claro si no hay tag semver
+# Semver tag resolved here (GIT_TAG or git describe --tags --exact-match)
+resolve_version() { # prints canonical version vX.Y.Z; fails with clear message if no semver tag
   local raw="${GIT_TAG:-}"
   if [[ -z "$raw" ]]; then
     raw="$(git describe --tags --exact-match 2>/dev/null || true)"
   fi
   if [[ -z "$raw" ]]; then
-    die "no hay tag semver valido: GIT_TAG vacio y el commit actual no tiene git tag exacto (git describe --tags --exact-match)"
+    die "no valid semver tag: GIT_TAG empty and current commit has no exact git tag (git describe --tags --exact-match)"
   fi
   if [[ ! "$raw" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    die "tag semver invalido: '$raw' no cumple el patron ^v?[0-9]+\.[0-9]+\.[0-9]+$ (se requiere vX.Y.Z)"
+    die "invalid semver tag: '$raw' does not match pattern ^v?[0-9]+\\.[0-9]+\\.[0-9]+$ (vX.Y.Z required)"
   fi
   printf 'v%s\n' "${raw#v}"
 }
 
 VER="$(resolve_version)"
-printf 'publish: version semver resuelta: %s\n' "$VER"
+printf 'publish: resolved semver version: %s\n' "$VER"
 
-# Runtime de contenedor disponible (podman o docker shim), override con CTR_CMD
+# Available container runtime (podman or docker shim), override with CTR_CMD
 CTR_CMD="${CTR_CMD:-}"
 if [[ -z "$CTR_CMD" ]]; then
   if command -v docker >/dev/null 2>&1; then
@@ -93,38 +93,38 @@ if [[ -z "$CTR_CMD" ]]; then
   elif command -v podman >/dev/null 2>&1; then
     CTR_CMD="podman"
   else
-    die "runtime de contenedor no encontrado: se requiere podman o docker"
+    die "container runtime not found: podman or docker required"
   fi
 fi
 SOURCE_TAG="${SOURCE_TAG:-latest}"
 
-# Gate de env vars de registry: sin el target no hay push posible y NO debe intentarse
+# Registry env vars gate: without target no push is possible and MUST NOT be attempted
 if [[ -z "${REGION:-}" || -z "${PROJECT_ID:-}" || -z "${REGISTRY_REPO:-}" ]]; then
-  die "faltan variables de registry: REGION, PROJECT_ID y REGISTRY_REPO son obligatorias (target: <REGION>-docker.pkg.dev/<PROJECT_ID>/<REGISTRY_REPO>/$IMAGE)"
+  die "missing registry variables: REGION, PROJECT_ID, and REGISTRY_REPO are required (target: <REGION>-docker.pkg.dev/<PROJECT_ID>/<REGISTRY_REPO>/$IMAGE)"
 fi
 TARGET_BASE="$REGION-docker.pkg.dev/$PROJECT_ID/$REGISTRY_REPO"
 
-image_digest() { # $1 = tag local -> imprime el digest local ({{.Id}}) de ese tag
+image_digest() { # $1 = local tag -> prints local digest ({{.Id}}) of that tag
   "$CTR_CMD" image inspect --format '{{.Id}}' "$1" 2>/dev/null || printf 'unknown\n'
 }
 
-# Etiquetado local: semver + latest sobre el mismo build; ambos deben apuntar al MISMO digest
+# Local tagging: semver + latest on same build; both must point to SAME digest
 if ! "$CTR_CMD" image inspect "$IMAGE:$SOURCE_TAG" >/dev/null 2>&1; then
-  die "imagen local no encontrada: $IMAGE:$SOURCE_TAG (construi primero la imagen)"
+  die "local image not found: $IMAGE:$SOURCE_TAG (build the image first)"
 fi
 
-"$CTR_CMD" tag "$IMAGE:$SOURCE_TAG" "$IMAGE:$VER" || die "fallo el etiquetado local de $IMAGE:$VER"
-"$CTR_CMD" tag "$IMAGE:$SOURCE_TAG" "$IMAGE:latest" || die "fallo el etiquetado local de $IMAGE:latest"
+"$CTR_CMD" tag "$IMAGE:$SOURCE_TAG" "$IMAGE:$VER" || die "failed to tag $IMAGE:$VER locally"
+"$CTR_CMD" tag "$IMAGE:$SOURCE_TAG" "$IMAGE:latest" || die "failed to tag $IMAGE:latest locally"
 DIG_VER="$(image_digest "$IMAGE:$VER")"
 DIG_LATEST="$(image_digest "$IMAGE:latest")"
 if [[ -z "$DIG_VER" || "$DIG_VER" == "unknown" || "$DIG_VER" != "$DIG_LATEST" ]]; then
-  die "digest divergente: $IMAGE:$VER=$DIG_VER vs $IMAGE:latest=$DIG_LATEST (los tags NO apuntan al mismo build)"
+  die "divergent digest: $IMAGE:$VER=$DIG_VER vs $IMAGE:latest=$DIG_LATEST (tags do NOT point to same build)"
 fi
 printf 'tagged: %s:%s -> %s\n' "$IMAGE" "$VER" "$DIG_VER"
 printf 'tagged: %s:latest -> %s\n' "$IMAGE" "$DIG_LATEST"
-printf 'digest ok: ambos tags apuntan al mismo digest local %s\n' "$DIG_VER"
+printf 'digest ok: both tags point to same local digest %s\n' "$DIG_VER"
 
-# Ahora la deteccion de credenciales puede reutilizarse en ambos modos
+# Credentials detection can be reused in both modes
 CRED_FILE=""
 for f in "${GOOGLE_APPLICATION_CREDENTIALS:-}" "${CI_IAM_CREDENTIALS_FILE:-}"; do
   if [[ -n "$f" && -f "$f" ]]; then
@@ -134,28 +134,28 @@ for f in "${GOOGLE_APPLICATION_CREDENTIALS:-}" "${CI_IAM_CREDENTIALS_FILE:-}"; d
 done
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  printf 'dry-run: validacion local OK; push a %s/%s:%s y :latest OMITIDO (--dry-run, no se toca red)\n' "$TARGET_BASE" "$IMAGE" "$VER"
+  printf 'dry-run: local validation OK; push to %s/%s:%s and :latest OMITTED (--dry-run, no network)\n' "$TARGET_BASE" "$IMAGE" "$VER"
   if [[ -n "$CRED_FILE" ]]; then
-    printf 'dry-run: credenciales WIF detectadas (%s); con push real se usaria gcloud auth login --cred-file\n' "$CRED_FILE"
+    printf 'dry-run: WIF credentials detected (%s); real push would use gcloud auth login --cred-file\n' "$CRED_FILE"
   else
-    printf 'dry-run: credenciales WIF NO detectadas (GOOGLE_APPLICATION_CREDENTIALS/CI_IAM_CREDENTIALS_FILE) - el push real requiere credenciales federadas\n'
+    printf 'dry-run: WIF credentials NOT detected (GOOGLE_APPLICATION_CREDENTIALS/CI_IAM_CREDENTIALS_FILE) - real push requires federated credentials\n'
   fi
   exit 0
 fi
 
-# Modo real: nunca push sin credenciales federadas (WIF), nunca credenciales estaticas
+# Real mode: never push without federated credentials (WIF), never static credentials
 if [[ -z "$CRED_FILE" ]]; then
-  die "credenciales WIF no encontradas: setear GOOGLE_APPLICATION_CREDENTIALS o CI_IAM_CREDENTIALS_FILE con el archivo federado (nada estatico en el repo)"
+  die "WIF credentials not found: set GOOGLE_APPLICATION_CREDENTIALS or CI_IAM_CREDENTIALS_FILE with the federated file (nothing static in the repo)"
 fi
 if ! command -v gcloud >/dev/null 2>&1; then
-  die "gcloud no esta en PATH: imposible autenticar con --cred-file; no se hace push sin autenticacion federada"
+  die "gcloud not in PATH: cannot authenticate with --cred-file; no push without federated auth"
 fi
 
-printf 'publish: autenticando WIF (gcloud auth login --cred-file %s)\n' "$CRED_FILE"
-gcloud auth login --cred-file "$CRED_FILE" >/dev/null || die "fallo la autenticacion WIF con gcloud (--cred-file $CRED_FILE)"
+printf 'publish: authenticating WIF (gcloud auth login --cred-file %s)\n' "$CRED_FILE"
+gcloud auth login --cred-file "$CRED_FILE" >/dev/null || die "WIF authentication failed with gcloud (--cred-file $CRED_FILE)"
 printf 'publish: pushing %s/%s:%s\n' "$TARGET_BASE" "$IMAGE" "$VER"
-"$CTR_CMD" push "$TARGET_BASE/$IMAGE:$VER" || die "fallo el push de $TARGET_BASE/$IMAGE:$VER"
+"$CTR_CMD" push "$TARGET_BASE/$IMAGE:$VER" || die "push of $TARGET_BASE/$IMAGE:$VER failed"
 printf 'publish: pushing %s/%s:latest\n' "$TARGET_BASE" "$IMAGE"
-"$CTR_CMD" push "$TARGET_BASE/$IMAGE:latest" || die "fallo el push de $TARGET_BASE/$IMAGE:latest"
-printf 'publish: publicado %s/%s:%s y :latest (digest %s)\n' "$TARGET_BASE" "$IMAGE" "$VER" "$DIG_VER"
+"$CTR_CMD" push "$TARGET_BASE/$IMAGE:latest" || die "push of $TARGET_BASE/$IMAGE:latest failed"
+printf 'publish: published %s/%s:%s and :latest (digest %s)\n' "$TARGET_BASE" "$IMAGE" "$VER" "$DIG_VER"
 exit 0
