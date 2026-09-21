@@ -1,6 +1,9 @@
 # Worktrees (nunca commitear)
 .worktrees/
 
+# Legacy planning doc (superseded by README.md)
+genai_secure_ci_cd.md
+
 # Python
 __pycache__/
 *.py[cod]
