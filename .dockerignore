@@ -1,0 +1,33 @@
+# --- Git / worktrees ---------------------------------------------------------
+.git
+git
+.gitignore
+.worktrees
+
+# --- Python caches / venvs ---------------------------------------------------
+.venv
+venv
+env
+envs
+__pycache__
+*.py[co]
+*.egg-info
+.pytest_cache
+.coverage
+htmlcov
+build
+dist
+
+# --- Infra / tooling del repo (reqs futuros, no entran a la imagen) ----------
+openspec
+tests
+scripts
+Jenkinsfile
+docs
+reports
+
+# --- Docs y config local ------------------------------------------------------
+*.md
+README*
+.env
+.env.*
