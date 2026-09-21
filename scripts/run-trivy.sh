@@ -189,11 +189,13 @@ if [[ -s "$OUTDIR/trivy-fs.json" ]]; then
     "$OUTDIR/trivy-fs.html" || true
 fi
 
-# Gate de severidad: cualquier finding con severidad en THRESHOLD rompe el build
-SEV_COUNTS="$(jq -r '[.Results[].Vulnerabilities[]?.Severity] | group_by(.) | map("\(.[0])=\(length)") | join(" ") // "none"' "$OUTDIR/trivy-image.json")"
+# Gate de severidad: cualquier finding con severidad en THRESHOLD rompe el build.
+# []? en ambos niveles: trivy emite "Results": null para imagenes limpias (p. ej.
+# scratch) y eso debe tratarse como cero findings, no como error de jq.
+SEV_COUNTS="$(jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | group_by(.) | map("\(.[0])=\(length)") | if length == 0 then "none" else join(" ") end' "$OUTDIR/trivy-image.json")"
 BREACH=0
 IFS=',' read -ra THRESHOLD_LIST <<< "$THRESHOLD"
-for sev in $(jq -r '[.Results[].Vulnerabilities[]?.Severity] | unique[]' "$OUTDIR/trivy-image.json"); do
+for sev in $(jq -r '[.Results[]?.Vulnerabilities[]?.Severity] | unique[]' "$OUTDIR/trivy-image.json"); do
   for want in "${THRESHOLD_LIST[@]}"; do
     if [[ "$sev" == "$want" ]]; then
       BREACH=1
