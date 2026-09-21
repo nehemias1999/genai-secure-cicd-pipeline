@@ -1,0 +1,13 @@
+# Worktrees (nunca commitear)
+.worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+
+# Reports y artefactos del pipeline
+reports/
